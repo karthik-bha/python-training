@@ -1,4 +1,3 @@
-raise RuntimeError("Testing runtime error")
 num1 = float(input())
 num2 = float(input())
 operator = input()
