@@ -1,0 +1,94 @@
+
+name: Evaluate Student Submissions
+
+on:
+  push:
+    paths:
+      - "assignments/**/submissions/**/*.py"
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout student repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout evaluator repository
+        uses: actions/checkout@v4
+        with:
+          repository: karthik-bha/python-evaluator
+          path: evaluator
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install evaluator dependencies
+        working-directory: evaluator
+        run: pip install -r requirements.txt
+
+      - name: Evaluate changed submissions
+        env:
+          BEFORE: ${{ github.event.before }}
+          HEAD: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p reports
+
+          if [[ "$BEFORE" =~ ^0+$ ]]; then
+            mapfile -d '' changed_files < <(
+              git ls-tree -r --name-only -z "$HEAD"
+            )
+          else
+            mapfile -d '' changed_files < <(
+              git diff --name-only --diff-filter=ACMRT -z "$BEFORE" "$HEAD"
+            )
+          fi
+
+          found=false
+
+          for file in "${changed_files[@]}"; do
+            if [[ "$file" =~ ^assignments/([^/]+)/submissions/.+\.py$ ]]; then
+              assignment_id="${BASH_REMATCH[1]}"
+              filename=$(basename "$file" .py)
+
+              echo "Evaluating: $file"
+              echo "Assignment: $assignment_id"
+
+              (
+                cd evaluator
+                python main.py \
+                  --assignment "$assignment_id" \
+                  --submission "$GITHUB_WORKSPACE/$file"
+              )
+
+              cp evaluator/evaluation_report.json \
+                "reports/${assignment_id}__${filename}.json"
+
+              found=true
+            fi
+          done
+
+          if [[ "$found" == false ]]; then
+            echo "No matching Python submissions found."
+          fi
+
+      - name: Upload evaluation reports
+        if: always() && hashFiles('reports/*.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: evaluation-reports
+          path: reports/*.json
+          retention-days: 14
