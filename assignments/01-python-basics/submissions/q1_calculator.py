@@ -1,19 +1,16 @@
+raise RuntimeError("Testing runtime error")
 num1 = float(input())
 num2 = float(input())
 operator = input()
 
-if operator == "-":
+if operator == "+":
     print(num1 + num2)
 elif operator == "-":
     print(num1 - num2)
 elif operator == "*":
     print(num1 * num2)
 elif operator == "/":
-    if num2 == 0:
-        print("Cannot divide by zero")
-    else:
-        print(num1 / num2)
+    print(num1 / num2)
 else:
-    print("Invalid operator")
-
+    raise ValueError("Invalid operator")
 # going to trigger a eval
