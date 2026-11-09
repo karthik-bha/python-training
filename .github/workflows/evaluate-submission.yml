@@ -58,31 +58,83 @@ jobs:
           fi
 
           found=false
+          evaluation_failed=false
+          assignment_ids=()
 
           for file in "${changed_files[@]}"; do
-            if [[ "$file" =~ ^assignments/([^/]+)/submissions/.+\.py$ ]]; then
+            if [[ "$file" =~ ^assignments/([^/]+)/submissions/([^/]+)\.py$ ]]; then
               assignment_id="${BASH_REMATCH[1]}"
-              filename=$(basename "$file" .py)
+              filename="${BASH_REMATCH[2]}"
+              question_id="${filename%%_*}"
+              report_path="reports/${assignment_id}__${filename}.json"
 
               echo "Evaluating: $file"
               echo "Assignment: $assignment_id"
+              echo "Question: $question_id"
 
-              (
+              if (
                 cd evaluator
                 python main.py \
                   --assignment "$assignment_id" \
-                  --submission "$GITHUB_WORKSPACE/$file"
-              )
+                  --question "$question_id" \
+                  --submission "$GITHUB_WORKSPACE/$file" \
+                  --report-output "$GITHUB_WORKSPACE/$report_path"
+              ); then
+                :
+              else
+                evaluation_failed=true
+                python - "$assignment_id" "$question_id" "$report_path" <<'PY'
+          import json
+          import sys
+          assignment_id, question_id, report_path = sys.argv[1:]
+          with open(report_path, "w", encoding="utf-8") as report_file:
+              json.dump({
+                  "assignment_id": assignment_id,
+                  "question_id": question_id,
+                  "question": None,
+                  "status": "error",
+                  "error": "Question configuration is missing or invalid",
+                  "total_tests": 0,
+                  "passed": 0,
+                  "score": 0.0
+              }, report_file, indent=4)
+          PY
+              fi
 
-              cp evaluator/evaluation_report.json \
-                "reports/${assignment_id}__${filename}.json"
-
+              assignment_ids+=("$assignment_id")
               found=true
             fi
           done
 
           if [[ "$found" == false ]]; then
             echo "No matching Python submissions found."
+          else
+            declare -A summarized_assignments=()
+            for summary_assignment in "${assignment_ids[@]}"; do
+              if [[ -n "${summarized_assignments[$summary_assignment]:-}" ]]; then
+                continue
+              fi
+              summarized_assignments[$summary_assignment]=true
+              assignment_reports=()
+              for report_path in "reports/${summary_assignment}"__*.json; do
+                [[ "$report_path" == *"__summary.json" ]] && continue
+                assignment_reports+=("$report_path")
+              done
+              absolute_reports=()
+              for report_path in "${assignment_reports[@]}"; do
+                absolute_reports+=("$GITHUB_WORKSPACE/$report_path")
+              done
+              (
+                cd evaluator
+                python -m evaluator.aggregate_reports \
+                  --reports "${absolute_reports[@]}" \
+                  --output "$GITHUB_WORKSPACE/reports/${summary_assignment}__summary.json"
+              )
+            done
+          fi
+
+          if [[ "$evaluation_failed" == true ]]; then
+            exit 1
           fi
 
       - name: Upload evaluation reports
